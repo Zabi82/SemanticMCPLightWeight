@@ -1,0 +1,179 @@
+catalog: tpch_business_glossary
+description: "Business glossary for TPC-H data. Use this context before writing SQL queries."
+
+schemas:
+  - name: ice_db
+    description: "Historical batch-loaded TPC-H data (static reference)"
+  - name: streaming_db
+    description: "Real-time orders and lineitems arriving via Kafka. Same structure as ice_db but current dates."
+
+entities:
+  - name: orders
+    table: orders
+    description: "Customer purchase orders"
+    columns:
+      - name: orderkey
+        description: "Unique order identifier"
+      - name: custkey
+        description: "Foreign key to customer table"
+      - name: orderstatus
+        description: "Order lifecycle status"
+        values:
+          F: "Filled — order is complete and fulfilled. Use this for 'completed orders'."
+          O: "Open — order placed but not yet fulfilled. Counts as PENDING."
+          P: "Processing — order being processed. Also counts as PENDING."
+        business_note: "IMPORTANT: Both O and P are pending/unfulfilled. Only F is completed."
+      - name: totalprice
+        description: "Total order value before line-item discounts"
+      - name: orderdate
+        description: "Date the order was placed"
+      - name: orderpriority
+        description: "Business priority of the order"
+        values:
+          1-URGENT: "Highest priority — must ship immediately"
+          2-HIGH: "High priority"
+          3-MEDIUM: "Standard priority"
+          4-NOT SPECIFIED: "No priority assigned"
+          5-LOW: "Low priority, flexible shipping"
+        business_note: "HIGH PRIORITY means 1-URGENT and 2-HIGH only. Do NOT include 3-MEDIUM."
+
+  - name: lineitem
+    table: lineitem
+    description: "Individual line items within an order. One order has multiple lineitems."
+    columns:
+      - name: orderkey
+        description: "Foreign key to orders table"
+      - name: partkey
+        description: "Foreign key to part table"
+      - name: suppkey
+        description: "Foreign key to supplier table"
+      - name: quantity
+        description: "Number of units ordered"
+      - name: extendedprice
+        description: "Gross price before discount (quantity × unit price)"
+      - name: discount
+        description: "Discount rate as a decimal (e.g. 0.05 = 5% discount)"
+      - name: shipdate
+        description: "Actual date the item was shipped"
+      - name: commitdate
+        description: "Promised delivery date agreed with customer"
+      - name: receiptdate
+        description: "Date customer received the item"
+      - name: returnflag
+        description: "Return status: R=Returned, A=Accepted, N=None"
+      - name: linestatus
+        description: "Line status: O=Open, F=Fulfilled"
+    business_note: "ON-TIME delivery means shipdate <= commitdate. Use this exact condition."
+
+  - name: customer
+    table: customer
+    description: "Customer master data"
+    columns:
+      - name: custkey
+        description: "Unique customer identifier"
+      - name: name
+        description: "Customer name"
+      - name: nationkey
+        description: "Foreign key to nation table"
+      - name: acctbal
+        description: "Account balance — creditworthiness indicator. High balance = financially strong customer."
+      - name: mktsegment
+        description: "Market segment: AUTOMOBILE, BUILDING, FURNITURE, MACHINERY, HOUSEHOLD"
+
+  - name: supplier
+    table: supplier
+    description: "Supplier master data"
+    columns:
+      - name: suppkey
+        description: "Unique supplier identifier"
+      - name: name
+        description: "Supplier name"
+      - name: nationkey
+        description: "Foreign key to nation table"
+      - name: acctbal
+        description: "Supplier account balance"
+
+  - name: nation
+    table: nation
+    description: "Country reference data"
+    columns:
+      - name: nationkey
+        description: "Unique nation identifier"
+      - name: name
+        description: "Country name (e.g. GERMANY, FRANCE, JAPAN)"
+      - name: regionkey
+        description: "Foreign key to region table"
+
+  - name: region
+    table: region
+    description: "Geographic region reference data"
+    columns:
+      - name: regionkey
+        description: "Unique region identifier"
+      - name: name
+        description: "Region name: AFRICA, AMERICA, ASIA, EUROPE, MIDDLE EAST"
+
+  - name: part
+    table: part
+    description: "Product/part catalog"
+    columns:
+      - name: partkey
+        description: "Unique part identifier"
+      - name: name
+        description: "Part name"
+      - name: type
+        description: "Part type/category"
+      - name: retailprice
+        description: "Retail price of the part"
+
+metrics:
+  - name: revenue
+    description: "Net revenue after discounts"
+    formula: "SUM(extendedprice * (1 - discount))"
+    table: lineitem
+    business_note: "Always use (1 - discount) to get net revenue. extendedprice alone is gross."
+
+  - name: order_completion_rate
+    description: "Percentage of orders that are completed"
+    formula: "COUNT(*) FILTER (WHERE orderstatus = 'F') / COUNT(*) * 100"
+    table: orders
+    business_note: "Only orderstatus = 'F' counts as completed. O and P are NOT completed."
+
+  - name: high_priority_order_rate
+    description: "Percentage of orders that are high priority"
+    formula: "COUNT(*) FILTER (WHERE orderpriority IN ('1-URGENT','2-HIGH')) / COUNT(*) * 100"
+    table: orders
+
+  - name: on_time_delivery_rate
+    description: "Percentage of line items delivered on or before the commit date"
+    formula: "SUM(CASE WHEN shipdate <= commitdate THEN 1 ELSE 0 END) * 1.0 / COUNT(*) * 100"
+    table: lineitem
+    business_note: "On-time means shipdate <= commitdate. Do not use receiptdate."
+
+  - name: pending_order_value
+    description: "Total value of orders not yet fulfilled"
+    formula: "SUM(totalprice) FILTER (WHERE orderstatus IN ('O', 'P'))"
+    table: orders
+    business_note: "Both O (Open) and P (Processing) are pending. Neither is completed."
+
+  - name: premium_customer
+    description: "A customer who is both financially strong and a high-revenue buyer. Combines creditworthiness (account balance) with actual purchasing value (net revenue)."
+    formula: "acctbal >= 7500 AND SUM(extendedprice * (1 - discount)) >= 2500000"
+    tables: [customer, orders, lineitem]
+    thresholds:
+      acctbal_min: 7500
+      revenue_min: 2500000
+    business_note: |
+      A customer must satisfy BOTH conditions to be considered premium (~5% of customers).
+      Use this definition when asked about 'premium', 'top', 'best', or 'VIP' customers.
+      Join path: customer → orders (custkey) → lineitem (orderkey)
+
+join_paths:
+  - description: "Order to customer geographic region"
+    path: "orders → customer (custkey) → nation (nationkey) → region (regionkey)"
+  - description: "Lineitem to supplier geographic region"
+    path: "lineitem → supplier (suppkey) → nation (nationkey) → region (regionkey)"
+  - description: "Lineitem to part"
+    path: "lineitem → part (partkey)"
+  - description: "Order to its line items"
+    path: "orders → lineitem (orderkey)"

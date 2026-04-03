@@ -1,0 +1,200 @@
+services:
+
+  # MinIO — S3-compatible object storage for Iceberg data files
+  minio:
+    image: minio/minio
+    container_name: minio
+    networks:
+      iceberg_net:
+        aliases:
+          - warehouse.minio
+    environment:
+      - MINIO_ROOT_USER=admin
+      - MINIO_ROOT_PASSWORD=password
+      - MINIO_DOMAIN=minio
+    ports:
+      - 9001:9001
+      - 9000:9000
+    command: ["server", "/data", "--console-address", ":9001"]
+
+  mc:
+    depends_on:
+      - minio
+    image: minio/mc
+    container_name: mc
+    networks:
+      iceberg_net:
+    environment:
+      - AWS_ACCESS_KEY_ID=admin
+      - AWS_SECRET_ACCESS_KEY=password
+      - AWS_REGION=us-east-1
+    entrypoint: >
+      /bin/sh -c "
+      until (/usr/bin/mc alias set minio http://minio:9000 admin password) do echo '...waiting...' && sleep 1; done;
+      /usr/bin/mc mb --ignore-existing minio/warehouse;
+      /usr/bin/mc policy set public minio/warehouse;
+      tail -f /dev/null
+      "
+
+  # Iceberg REST Catalog
+  rest:
+    image: tabulario/iceberg-rest
+    container_name: iceberg-rest
+    networks:
+      iceberg_net:
+    ports:
+      - 8181:8181
+    depends_on:
+      - minio
+    environment:
+      - AWS_ACCESS_KEY_ID=admin
+      - AWS_SECRET_ACCESS_KEY=password
+      - AWS_REGION=us-east-1
+      - CATALOG_WAREHOUSE=s3://warehouse/
+      - CATALOG_IO__IMPL=org.apache.iceberg.aws.s3.S3FileIO
+      - CATALOG_S3_ENDPOINT=http://minio:9000
+
+  # Trino — query engine; entrypoint waits for self-readiness then runs init SQL
+  trino:
+    image: trinodb/trino
+    container_name: trino
+    networks:
+      iceberg_net:
+    ports:
+      - 8080:8080
+    depends_on:
+      - minio
+      - rest
+    volumes:
+      - ./trino/semantic_demo.properties:/etc/trino/catalog/semantic_demo.properties
+      - ./trino/init-tpch.sql:/docker-entrypoint-initdb.d/init-tpch.sql
+      - ./trino/entrypoint.sh:/usr/local/bin/custom-entrypoint.sh
+    environment:
+      - TRINO_CONF_DIR=/etc/trino
+    entrypoint: ["/usr/local/bin/custom-entrypoint.sh"]
+    healthcheck:
+      test: ["CMD-SHELL", "trino --execute 'SELECT count(*) FROM semantic_demo.ice_db.orders' 2>/dev/null | grep -q '[0-9]'"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  # Kafka — Confluent Platform (KRaft mode, no Zookeeper)
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: kafka
+    networks:
+      iceberg_net:
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,EXTERNAL://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:29092
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list 2>/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # AKHQ — Kafka UI for visualising topics, messages and consumer groups
+  akhq:
+    image: tchiotludo/akhq:latest
+    container_name: akhq
+    networks:
+      iceberg_net:
+    ports:
+      - "8086:8080"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    volumes:
+      - ./akhq/application.yml:/app/application.yml
+
+  # Kafka Connect with Iceberg Sink connector (pre-installed via custom Dockerfile)
+  kafka-connect:
+    build:
+      context: ./kafka-connect
+      dockerfile: Dockerfile
+    container_name: kafka-connect
+    networks:
+      iceberg_net:
+    ports:
+      - "8083:8083"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      rest:
+        condition: service_started
+      minio:
+        condition: service_started
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: kafka:9092
+      CONNECT_REST_PORT: 8083
+      CONNECT_REST_ADVERTISED_HOST_NAME: kafka-connect
+      CONNECT_GROUP_ID: iceberg-connect-group
+      CONNECT_CONFIG_STORAGE_TOPIC: connect-configs
+      CONNECT_OFFSET_STORAGE_TOPIC: connect-offsets
+      CONNECT_STATUS_STORAGE_TOPIC: connect-status
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_PLUGIN_PATH: /usr/share/java,/usr/share/confluent-hub-components,/connectors
+      AWS_ACCESS_KEY_ID: admin
+      AWS_SECRET_ACCESS_KEY: password
+      AWS_REGION: us-east-1
+    volumes:
+      - ./kafka-connect/connectors:/connectors
+      - ./kafka-connect/register-connectors.sh:/register-connectors.sh
+    command:
+      - bash
+      - -c
+      - |
+        /etc/confluent/docker/run &
+        echo "Waiting for Kafka Connect REST API..."
+        until curl -sf http://localhost:8083/connectors; do sleep 5; done
+        echo "Registering Iceberg sink connectors..."
+        bash /register-connectors.sh
+        wait
+
+  # Java Kafka Producer — reads TPC-H from Trino, publishes to Kafka with current dates
+  kafka-producer:
+    build:
+      context: ./KafkaProducer
+      dockerfile: Dockerfile
+    container_name: kafka-producer
+    networks:
+      iceberg_net:
+    depends_on:
+      trino:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - TRINO_HOST=trino
+      - TRINO_PORT=8080
+      - TRINO_CATALOG=semantic_demo
+      - TRINO_SCHEMA=ice_db
+      - PRODUCER_BATCH_SIZE=10
+      - PRODUCER_INTERVAL_MS=5000
+    restart: on-failure
+
+networks:
+  iceberg_net:

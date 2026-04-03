@@ -1,0 +1,5 @@
+akhq:
+  connections:
+    tpch-streaming:
+      properties:
+        bootstrap.servers: "kafka:9092"
