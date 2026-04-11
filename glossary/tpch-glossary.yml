@@ -158,11 +158,11 @@ metrics:
 
   - name: premium_customer
     description: "A customer who is both financially strong and a high-revenue buyer. Combines creditworthiness (account balance) with actual purchasing value (net revenue)."
-    formula: "acctbal >= 7500 AND SUM(extendedprice * (1 - discount)) >= 2500000"
+    formula: "acctbal >= 8000 AND SUM(extendedprice * (1 - discount)) >= 300000"
     tables: [customer, orders, lineitem]
     thresholds:
-      acctbal_min: 7500
-      revenue_min: 2500000
+      acctbal_min: 8000
+      revenue_min: 300000
     business_note: |
       A customer must satisfy BOTH conditions to be considered premium (~5% of customers).
       Use this definition when asked about 'premium', 'top', 'best', or 'VIP' customers.
