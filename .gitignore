@@ -1,0 +1,23 @@
+# Log files
+*.log
+
+# Kafka Connect downloaded plugins (build locally via setup-connector.sh)
+kafka-connect/plugins/*.jar
+kafka-connect/plugins/*.zip
+
+# Maven build artifacts
+KafkaProducer/target/
+StreamingDataLakeHouseMCP/target/
+GlossaryMCP/target/
+
+# Python
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+*.iml
+.vscode/

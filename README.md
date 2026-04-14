@@ -176,7 +176,7 @@ SELECT COUNT(*) FROM semantic_demo.streaming_db.region;    -- 5
 
 ## AI Client Configuration
 
-Both MCP servers communicate over stdio. Any MCP-compatible AI client works — Claude Desktop, Kiro, GitHub Copilot, and others.
+Both MCP servers communicate over stdio. Any MCP-compatible AI client works — Claude Code, Kiro, GitHub Copilot, and others.
 
 **Key rule:**
 - **Scenario One** (data layer only) — start only `StreamingDataLakeHouseMCP`, configure only that server
@@ -184,7 +184,7 @@ Both MCP servers communicate over stdio. Any MCP-compatible AI client works — 
 
 Update the jar paths and glossary path to match your local clone.
 
-> **Note on `--glossary.file.path`**: The GlossaryMCP defaults to `glossary/tpch-glossary.yml` relative to its working directory. When running manually from the repo root this resolves correctly without the flag. However, AI clients (Claude Desktop, Kiro, etc.) launch the process from an unpredictable working directory, so always pass an **absolute path** in MCP configs.
+> **Note on `--glossary.file.path`**: The GlossaryMCP defaults to `glossary/tpch-glossary.yml` relative to its working directory. When running manually from the repo root this resolves correctly without the flag. However, AI clients launch the process from an unpredictable working directory, so always pass an **absolute path** in MCP configs.
 
 ### Scenario One — Data Layer Only
 
@@ -219,34 +219,45 @@ Update the jar paths and glossary path to match your local clone.
 }
 ```
 
+## Agent Files
+
+Pre-built agent definitions for each scenario are included for all three supported AI clients. Each client has a `data-layer-only` and a `data-and-semantic-layer` variant.
+
+```
+.kiro/steering/                          ← Kiro steering files (load via # in chat)
+  data-layer-only.md
+  data-and-semantic-layer.md
+
+.claude/agents/                          ← Claude Code sub-agents
+  data-layer-only.md
+  data-and-semantic-layer.md
+
+.github/agents/                          ← GitHub Copilot agent mode
+  data-layer-only.md
+  data-and-semantic-layer.md
+```
+
 ### Claude Desktop
 
 Config location:
 - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
 - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
 
-Paste the appropriate JSON above and restart Claude Desktop. For the demo, open two separate Claude Desktop windows — one per scenario.
+Paste the appropriate MCP JSON above and restart Claude Desktop. For the demo, open two separate Claude Desktop windows — one per scenario.
 
 ### Claude Code
 
-```bash
-# Scenario One — data layer only
-# No CLAUDE.md needed, just configure the MCP server
-
-# Scenario Two — add glossary server to MCP config
-```
-
-Claude Code picks up MCP config automatically. Add agent instructions via `CLAUDE.md` at the repo root if needed.
+Place the MCP config in `.claude/settings.json` at the repo root. Claude Code automatically picks up sub-agents from `.claude/agents/` — select `data-layer-only` or `data-and-semantic-layer` depending on the scenario.
 
 ### Kiro
 
-Place the JSON in `~/.kiro/settings/mcp.json` (user-level) or `.kiro/settings/mcp.json` (workspace-level).
+Place the MCP JSON in `~/.kiro/settings/mcp.json` (user-level) or `.kiro/settings/mcp.json` (workspace-level). Load the matching steering file in chat using `#data-layer-only` or `#data-and-semantic-layer`.
 
-> Note: Kiro shows all tools from all configured MCP servers. For a clean Scenario One vs Two comparison, use two separate Kiro workspace windows with different `mcp.json` configs.
+> Note: For a clean Scenario One vs Two comparison, use two separate Kiro workspace windows with different `mcp.json` configs.
 
 ### GitHub Copilot
 
-MCP servers are configured in `.vscode/mcp.json` in your workspace. Note the key is `servers`, not `mcpServers`:
+MCP servers are configured in `.vscode/mcp.json`. Note the key is `servers`, not `mcpServers`:
 
 **Scenario One:**
 ```json
@@ -278,6 +289,8 @@ MCP servers are configured in `.vscode/mcp.json` in your workspace. Note the key
   }
 }
 ```
+
+Agent definitions in `.github/agents/` are picked up automatically by Copilot's agent mode — select the appropriate one for each scenario.
 
 ## Testing MCP Servers
 
