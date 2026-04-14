@@ -9,7 +9,12 @@ This demo shows how AI agents interact with a real-time streaming data platform 
 Two scenarios are compared:
 
 - **Scenario One**: Agent with data layer access only — queries Iceberg directly, guesses business logic, gets inconsistent answers
+
+  ![Naive approach — data layer only](images/demo-naive-approach.png)
+
 - **Scenario Two**: Agent with data layer + lightweight glossary — uses a business dictionary to understand table semantics before writing SQL
+
+  ![Context-assisted — data layer + semantic layer](images/demo-context-assisted-semantic-layer.png)
 
 
 ## Repository Structure
@@ -34,37 +39,7 @@ SemanticMCPLightWeight/
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                    AI Agents (Kiro/Claude)               │
-│              via MCP (Model Context Protocol)            │
-└────────────────────┬────────────────────────────────────┘
-                     │
-        ┌────────────┴────────────┐
-        │                         │
-┌───────▼──────────┐   ┌──────────▼──────────┐
-│  Streaming       │   │   GlossaryMCP        │
-│  DataLakehouse   │   │   (business glossary │
-│  MCP Server      │   │    + hints for LLM)  │
-│  Trino + Kafka   │   └─────────────────────┘
-└───────┬──────────┘
-        │
-┌───────▼──────────────────────────────────────┐
-│              Trino Query Engine               │
-└───────┬──────────────────────────────────────┘
-        │
-┌───────▼──────────────────────────────────────┐
-│  Iceberg Tables (MinIO / S3)                  │
-│  ice_db: historical TPC-H batch data          │
-│  streaming_db: real-time Kafka-landed data    │
-└───────────────────────────────────────────────┘
-        ▲
-┌───────┴──────────────────────────────────────┐
-│  Kafka (Confluent)  ←  Java Producer          │
-│  Topics: tpch.orders, tpch.lineitems          │
-│  Kafka Connect Iceberg Sink → streaming_db    │
-└───────────────────────────────────────────────┘
-```
+See the diagrams above in the Overview section for a visual breakdown of each scenario.
 
 ## Streaming Data Design
 
